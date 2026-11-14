@@ -53,28 +53,28 @@ int32_t a2dpDataCb(Frame* frame, int32_t frameCount) {
 
 }  // namespace
 
+void AudioPlayer::forceSpeakAmpOff() {
+  // Keep onboard Speak (P2) silent — headphones-only product policy.
+  pinMode(PIN_SPEAK_AMP_SD, OUTPUT);
+  digitalWrite(PIN_SPEAK_AMP_SD, kSpeakAmpActiveHigh ? LOW : HIGH);
+}
+
 void AudioPlayer::begin(Playlist* playlist) {
   playlist_ = playlist;
   gPlayer = this;
   mode_ = DEFAULT_AUDIO_OUT_MODE;
   volume_ = kDefaultVolume;
 
-  pinMode(PIN_AMP_ENABLE, OUTPUT);
-  setAmpEnabled(false);
+  forceSpeakAmpOff();
 
   pcmRing = new PcmRing(4096);
   ringOut = new AudioOutputRing(pcmRing);
 
-  // Local path: internal DAC (GPIO25 L / GPIO26 R). Speak P2 is GPIO26.
-  i2sOut = new AudioOutputI2S(0, 1 /* INTERNAL_DAC */);
-  i2sOut->SetOutputModeMono(true);
+  // Wired headphones: external I2S DAC (not internal DAC / Speak P2).
+  i2sOut = new AudioOutputI2S(0, 0 /* EXTERNAL_I2S */);
+  i2sOut->SetPinout(PIN_I2S_BCLK, PIN_I2S_LRC, PIN_I2S_DOUT);
+  i2sOut->SetOutputModeMono(false);
   applyVolume();
-}
-
-void AudioPlayer::setAmpEnabled(bool on) {
-  // Many CYD revisions use GPIO4 as amp _SD (active HIGH enable).
-  // RGB red shares this pin (LED active LOW) — red LED off while amp enabled.
-  digitalWrite(PIN_AMP_ENABLE, on ? HIGH : LOW);
 }
 
 void AudioPlayer::applyVolume() {
@@ -110,7 +110,6 @@ void AudioPlayer::ensureBt() {
   a2dp->set_ssid_callback(sinkFilter);
   a2dp->set_auto_reconnect(true);
   a2dp->start(a2dpDataCb);
-  // Advertise-ish local name used in logs; sink discovery uses ssid callback.
   btStarted_ = true;
 }
 
@@ -127,8 +126,8 @@ void AudioPlayer::setMode(AudioOutMode mode) {
   const bool wasPlaying = playing_ && !paused_;
   stop();
   mode_ = mode;
+  forceSpeakAmpOff();
   if (mode_ == AudioOutMode::Bluetooth) {
-    setAmpEnabled(false);
     ensureBt();
   } else {
     teardownBt();
@@ -139,8 +138,8 @@ void AudioPlayer::setMode(AudioOutMode mode) {
 }
 
 void AudioPlayer::cycleMode() {
-  setMode(mode_ == AudioOutMode::LocalDac ? AudioOutMode::Bluetooth
-                                          : AudioOutMode::LocalDac);
+  setMode(mode_ == AudioOutMode::WiredJack ? AudioOutMode::Bluetooth
+                                           : AudioOutMode::WiredJack);
 }
 
 void AudioPlayer::closeDecoder() {
@@ -158,10 +157,10 @@ void AudioPlayer::closeDecoder() {
 
 bool AudioPlayer::openCurrent() {
   closeDecoder();
+  forceSpeakAmpOff();
   if (!playlist_ || playlist_->empty()) {
     playing_ = false;
     paused_ = false;
-    setAmpEnabled(false);
     return false;
   }
 
@@ -173,10 +172,8 @@ bool AudioPlayer::openCurrent() {
     ensureBt();
     if (pcmRing) pcmRing->clear();
     out = ringOut;
-    setAmpEnabled(false);
   } else {
     out = i2sOut;
-    setAmpEnabled(true);
   }
 
   if (isMp3(path)) {
@@ -191,7 +188,6 @@ bool AudioPlayer::openCurrent() {
   if (!generator->begin(fileSrc, out)) {
     Serial.printf("Audio: failed to start %s\n", path.c_str());
     closeDecoder();
-    setAmpEnabled(false);
     playing_ = false;
     return false;
   }
@@ -214,11 +210,9 @@ void AudioPlayer::playPause() {
   }
   if (paused_) {
     paused_ = false;
-    if (mode_ == AudioOutMode::LocalDac) setAmpEnabled(true);
     return;
   }
   paused_ = true;
-  setAmpEnabled(false);
 }
 
 void AudioPlayer::next() {
@@ -243,7 +237,7 @@ void AudioPlayer::stop() {
   closeDecoder();
   playing_ = false;
   paused_ = false;
-  setAmpEnabled(false);
+  forceSpeakAmpOff();
 }
 
 void AudioPlayer::update() {
@@ -254,7 +248,6 @@ void AudioPlayer::update() {
   if (!playing_ || paused_ || !generator) return;
 
   if (!generator->isRunning()) {
-    // Track finished → advance
     playlist_->next();
     openCurrent();
     return;

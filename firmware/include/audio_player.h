@@ -43,7 +43,7 @@ class AudioPlayer {
   bool openCurrent();
   void closeDecoder();
   void applyVolume();
-  void setAmpEnabled(bool on);
+  void forceSpeakAmpOff();
   void ensureBt();
   void teardownBt();
 };

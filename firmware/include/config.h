@@ -25,15 +25,17 @@ static const bool kBtnActiveLow = true;  // switch to GND, external pull-up to 3
 #define IDLE_DEEP_SLEEP_MS 300000UL
 #endif
 
-// ----- Audio output mode -----
+// ----- Audio output mode (headphones only) -----
+// Wired = external I2S DAC → 3.5 mm jack. Bluetooth = A2DP Source → BT headphones.
+// Onboard Speak (P2) is intentionally not used.
 enum class AudioOutMode : uint8_t {
-  LocalDac = 0,  // Speak P2 / 3.5 mm jack amp path on GPIO26
-  Bluetooth = 1  // A2DP Source → paired BT headphones/speaker
+  WiredJack = 0,  // External I2S headphone DAC/amp (see pins.h + README)
+  Bluetooth = 1   // A2DP Source → paired BT headphones
 };
 
 // Default start mode. Change at runtime via 4-click on the button.
 #ifndef DEFAULT_AUDIO_OUT_MODE
-#define DEFAULT_AUDIO_OUT_MODE AudioOutMode::LocalDac
+#define DEFAULT_AUDIO_OUT_MODE AudioOutMode::WiredJack
 #endif
 
 // Preferred A2DP sink name (partial match). Empty = connect to first found sink.

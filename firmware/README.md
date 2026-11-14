@@ -2,7 +2,9 @@
 
 Music player firmware for the **ESP32-2432S028** Cheap Yellow Display (2.8" ST7789 / ILI9341).
 
-Gruvbox UI, microSD playback, multi-click button on **P3 IO35**, local audio on **Speak P2** (3.5 mm jack with external amp), optional **Bluetooth A2DP source**, battery readout (with ADC add-on), and configurable display auto-off.
+Gruvbox UI, microSD playback, multi-click button on **P3 IO35**, **headphones-only** audio (**wired 3.5 mm jack** via external I2S DAC/amp **or Bluetooth A2DP**), battery readout (with ADC add-on), and configurable display auto-off.
+
+> **Audio policy:** do **not** use the onboard **Speak (P2)** speaker path. Leave P2 unconnected; the firmware keeps the Speak amp shut down.
 
 ## Quick start
 
@@ -55,22 +57,24 @@ If `/music` is missing, the firmware also scans the SD root for audio files.
 | TFT MOSI / MISO / SCLK | 13 / 12 / 14 | HSPI |
 | TFT CS / DC / BL | 15 / 2 / 21 | Backlight also on P3 |
 | SD MOSI / MISO / SCK / CS | 23 / 19 / 18 / 5 | VSPI |
-| Speak (DAC → P2) | **26** | Local audio |
-| Amp enable (many revs) | 4 | Shared with RGB red (active-LOW LED) |
+| Speak (P2) | 26 | **Unused** — leave unconnected |
+| Speak amp /SD (many revs) | 4 | Held **off** (also RGB red, active-LOW LED) |
+| I2S BCLK (jack DAC) | **22** | CN1 / P3 |
+| I2S LRC / WS (jack DAC) | **27** | CN1 |
+| I2S DOUT (jack DAC) | **32** | Touch MOSI reused; touch unused |
 | RGB R / G / B | 4 / 16 / 17 | Active LOW |
 | LDR | 34 | ADC — reused for optional battery sense |
 | Button (P3) | **35** | Input-only, **needs external pull-up** |
-| Free on P3 / CN1 | 22, 27 | Digital I/O |
-| Touch SPI | 25/32/39/33/36 | Unused by this firmware |
 
 ### Known conflicts
 
 - Display (HSPI) and SD (VSPI) must stay on separate busses — `USE_HSPI_PORT` is set for TFT_eSPI.
 - **IO21** is backlight; using it from P3 fights the display.
 - **IO22** appears on both P3 and CN1 (same net).
-- **IO4** is RGB red *and* often the speaker-amp shutdown — local playback drives it HIGH.
+- **IO32** is touch MOSI — this firmware does not drive the XPT2046; enabling touch later requires moving I2S DOUT.
+- **IO4** is RGB red *and* Speak-amp shutdown — kept inactive so P2 stays silent.
 - Classic Bluetooth (A2DP) and Wi‑Fi do not coexist well; this firmware does not enable Wi‑Fi.
-- ESP32 **A2DP Source** streams *to* headphones/speakers. The board is **not** an A2DP sink (phone → CYD) in this build.
+- ESP32 **A2DP Source** streams *to* BT headphones. The board is **not** an A2DP sink (phone → CYD) in this build.
 
 ## Physical button (P3)
 
@@ -91,34 +95,54 @@ IO35 has **no internal pull-up**. Without the 10 kΩ resistor the pin floats and
 | 1 | Play / pause |
 | 2 | Next track |
 | 3 | Restart current (≥3 s in) or previous track |
-| 4 | Toggle output: **Jack** (local DAC) ↔ **BT** (A2DP source) |
+| 4 | Toggle output: **Jack** (wired I2S) ↔ **BT** (A2DP source) |
 
-## 3.5 mm jack / Speak P2
+## Wired 3.5 mm headphones (required add-on)
 
-Stock CYD brings **GPIO26 DAC** to the 2-pin **Speak (P2)** connector through a small amp (PAM8301/8302-class on many boards).
+**Do not** plug a speaker into **Speak P2**. That path is a small class-D speaker amp, not a headphone output, and this firmware leaves it disabled.
 
-### Minimal speaker
+Jack mode streams stereo I2S from the ESP32 to an **external DAC / headphone amp**, then to a **3.5 mm TRS jack**.
 
-Wire a 4–8 Ω speaker (or the included buzz/speaker) across P2. Observe polarity if marked.
+### Recommended modules
 
-### Headphone jack (recommended add-on)
+| Module | Role | Notes |
+| --- | --- | --- |
+| **PCM5102A** (or UDA1334) I2S DAC breakout | Digital → line-level analog | Cheap, works well with ESP32 I2S |
+| Small **headphone amp** (e.g. MAX97220 / “3.5 mm headphone amp” board) after the DAC | Drive 16–32 Ω phones | Prefer this over raw line-out into headphones |
+| Combo “I2S DAC + 3.5 mm jack” boards | One module | Confirm it is a **headphone** or line jack, not a speaker amp (avoid MAX98357 / PAM8302 for phones) |
 
-Do **not** hang low-Z headphones straight on the DAC pin without a proper amp / series protection — you can overload the ESP32 DAC and get tiny volume.
+Avoid speaker amps (MAX98357A, PAM8301/8302, etc.) as the jack driver — they are bridged class-D outputs meant for loudspeakers and can damage headphones / sound terrible.
 
-Recommended:
+### Wiring (PCM5102A example)
 
-1. Take **audio** from Speak P2 (post-amp) *or* feed GPIO26 into an external headphone amp module (e.g. MAX98357A is I2S — not drop-in; prefer a **3.5 mm breakout with its own amp** fed from P2, or a PAM8302 breakout → jack).
-2. Simple wired path many people use: **P2 → 100–220 µF series cap → tip of 3.5 mm jack**, sleeve to GND, with a **~1 kΩ** series resistor for safety. Volume will be low; an external amp is strongly preferred.
-3. Share **GND** with the CYD. Power external amps from **5 V (VIN)** or **3V3** per module ratings.
+CN1 on the CYD breaks out **GND · IO22 · IO27 · 3.3V** — use that for clocks + power. DOUT is GPIO32 (solder pad / touch MOSI net, or a jumper to the touch connector pin).
 
-Firmware path: `AudioOutMode::LocalDac` → ESP8266Audio → internal DAC → GPIO26. Amp enable on GPIO4 is asserted while playing.
+| CYD | PCM5102A (typical) |
+| --- | --- |
+| 3.3V | VCC |
+| GND | GND |
+| GPIO22 | BCK / BCLK |
+| GPIO27 | LRCK / LCK / WS |
+| GPIO32 | DIN / DATA |
+| — | SCK / FLT / XMT per module docs (often tie XMT high to unmute; SCK to GND for internal PLL) |
 
-## Bluetooth audio
+Then:
 
-- Mode: **A2DP Source** (CYD plays SD music → your BT headphones/speaker).
-- Put the sink in pairing mode, then **4-click** to switch to **BT** (or set `DEFAULT_AUDIO_OUT_MODE` to `Bluetooth` in `include/config.h`).
-- Optional name filter: set `BT_SINK_NAME_FILTER` to a substring of your speaker’s name; empty accepts the first discovered sink.
-- Pairing notes: classic BT only (ESP32-WROOM). Range and codec quality match the ESP-IDF A2DP source stack (SBC). Re-enter BT mode or reboot if the sink was offline at discovery.
+```
+PCM5102 LOUT/ROUT ──► headphone amp IN ──► 3.5 mm tip/ring
+GND shared throughout                 sleeve ── GND
+```
+
+If your DAC board already has a safe headphone jack and series protection, you may omit a separate amp — keep volume moderate on first listen.
+
+Firmware path: `AudioOutMode::WiredJack` → ESP8266Audio → **external I2S** on pins 22 / 27 / 32.
+
+## Bluetooth headphones
+
+- Mode: **A2DP Source** (CYD plays SD music → your **BT headphones**).
+- Put the headset in pairing mode, then **4-click** to switch to **BT** (or set `DEFAULT_AUDIO_OUT_MODE` to `Bluetooth` in `include/config.h`).
+- Optional name filter: set `BT_SINK_NAME_FILTER` to a substring of the headset name; empty accepts the first discovered sink.
+- Pairing notes: classic BT only (ESP32-WROOM). SBC codec. Re-enter BT mode or reboot if the sink was offline at discovery.
 
 ## Battery status
 
@@ -159,10 +183,10 @@ Any button click resets the idle timer and wakes the backlight. Deep sleep wakes
 | Gruvbox player UI | Yes | — |
 | microSD MP3/WAV | Yes (FAT32 card) | — |
 | Multi-click button | Code ready on IO35 | Switch + **10k pull-up** on P3 |
-| Local audio (Speak) | Yes on P2 / GPIO26 | Speaker or jack amp |
-| 3.5 mm headphones | Software path = local DAC | Jack + **amp** (recommended) |
-| Bluetooth to headset | A2DP **source** software | BT headphones/speaker (sink) |
-| Phone → CYD BT sink | Not implemented | Would need different A2DP sink firmware + usually no local decode path |
+| Onboard Speak (P2) | **Not used** | Leave unconnected |
+| Wired 3.5 mm headphones | I2S software path | **I2S DAC + headphone amp + jack** |
+| Bluetooth headphones | A2DP **source** software | BT headphones (sink) |
+| Phone → CYD BT sink | Not implemented | Different firmware |
 | Battery % | Shows USB placeholder | Voltage divider → GPIO34 + `BATTERY_SENSE_ENABLED` |
 | Auto-off / deep sleep | Yes | — |
 
